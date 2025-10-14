@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<!-- Required meta tags -->
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+	<!-- Bootstrap CSS -->
+	<link rel="stylesheet" href="stylesheets/bootstrap.min.css">
+	<link rel="stylesheet" href="stylesheets/broadcast.css">
+
+	<!-- Font Awesome CSS -->
+	<script src="../node_modules/@fortawesome/fontawesome-free/js/all.js" crossorigin="anonymous"></script>
+
+	<title>📢 Silent Stream</title>
+</head>
+
+<body>
+	<div>
+		<h1>Activate listening</h1>
+		<p>
+			Peer ID : <span id="peer_ID"></span>
+		</p>
+		<button id="listenButton"><i class="fas fa-play"></i> Play</button>
+		<button id="stopButton"><i class="fas fa-square"></i> Stop</button>
+		<audio id="audio" autoplay controls></audio>
+	</div>
+
+	<!-- jQuery first, then Popper.js, then Bootstrap JS -->
+
+	<!-- jQuery -->
+	<script src="../node_modules/jquery/dist/jquery.js"></script>
+
+	<!-- popper -->
+	<script src="thirdparty/popper.min.js"></script>
+
+	<!-- bootstrap -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"
+		integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1"
+		crossorigin="anonymous"></script>
+	<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"
+		integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM"
+		crossorigin="anonymous"></script>
+
+	<script src="../node_modules/peerjs/dist/peerjs.js"></script>
+
+	<script src="./js/listen.js"></script>
+</body>
+
+</html>
