@@ -1,9 +1,11 @@
+// lib/join_room_screen.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:beat_sync/room_screen.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class JoinRoomScreen extends StatefulWidget {
   const JoinRoomScreen({super.key});
@@ -12,16 +14,28 @@ class JoinRoomScreen extends StatefulWidget {
   State<JoinRoomScreen> createState() => _JoinRoomScreenState();
 }
 
-class _JoinRoomScreenState extends State<JoinRoomScreen> {
+class _JoinRoomScreenState extends State<JoinRoomScreen>
+    with SingleTickerProviderStateMixin {
   final _roomIdController = TextEditingController();
+  late AnimationController _animationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
 
   // Function to save room to recently joined rooms
   Future<void> _saveToRecentlyJoinedRooms(String roomId) async {
     final prefs = await SharedPreferences.getInstance();
-    final recentlyJoinedRoomsJson = prefs.getString('recently_joined_rooms') ?? '[]';
+    final recentlyJoinedRoomsJson =
+        prefs.getString('recently_joined_rooms') ?? '[]';
     final List<dynamic> roomIds = jsonDecode(recentlyJoinedRoomsJson);
     final updatedList = List<String>.from(roomIds);
-    
+
     // Add the room ID to the beginning of the list
     if (!updatedList.contains(roomId)) {
       updatedList.insert(0, roomId);
@@ -30,12 +44,12 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
       updatedList.remove(roomId);
       updatedList.insert(0, roomId);
     }
-    
+
     // Keep only the last 10 rooms
     if (updatedList.length > 10) {
       updatedList.removeRange(10, updatedList.length);
     }
-    
+
     await prefs.setString('recently_joined_rooms', jsonEncode(updatedList));
   }
 
@@ -67,17 +81,13 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
 
       // Add user to participants if not already a participant
       try {
-        await Supabase.instance.client
-            .from('room_participants')
-            .upsert({
+        await Supabase.instance.client.from('room_participants').upsert({
           'room_id': roomId,
           'profile_id': userId,
         }, onConflict: 'room_id,profile_id');
       } catch (e) {
         // If upsert fails, try insert
-        await Supabase.instance.client
-            .from('room_participants')
-            .insert({
+        await Supabase.instance.client.from('room_participants').insert({
           'room_id': roomId,
           'profile_id': userId,
         });
@@ -85,7 +95,7 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
 
       // Save to recently joined rooms
       await _saveToRecentlyJoinedRooms(roomId);
-      
+
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => RoomScreen(roomId: roomId)),
@@ -100,10 +110,16 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
   }
 
   @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Join a Room'),
+        title: Text('Join a Room', style: GoogleFonts.poppins()),
         elevation: 4,
       ),
       body: Padding(
@@ -112,15 +128,18 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // Header with icon
-            Icon(
-              Icons.qr_code_scanner,
-              size: 64,
-              color: Theme.of(context).colorScheme.primary,
+            ScaleTransition(
+              scale: _animationController,
+              child: Icon(
+                Icons.qr_code_scanner,
+                size: 64,
+                color: Colors.blue,
+              ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Join a Room',
-              style: TextStyle(
+              style: GoogleFonts.poppins(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -135,12 +154,11 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                 color: Colors.grey,
               ),
             ),
-            
+
             const SizedBox(height: 40),
 
             // Room ID input
             Card(
-              elevation: 4,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16.0),
               ),
@@ -177,7 +195,7 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                 ),
               ),
             ),
-            
+
             const SizedBox(height: 24),
 
             // Join button
@@ -188,6 +206,7 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0),
                 ),
+                backgroundColor: Colors.blue,
               ),
               child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -201,11 +220,11 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                 ],
               ),
             ),
-            
+
             const SizedBox(height: 32),
-            
+
             const Divider(height: 48),
-            
+
             const SizedBox(height: 16),
 
             // QR Scan button
@@ -231,14 +250,14 @@ class _JoinRoomScreenState extends State<JoinRoomScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0),
                 ),
+                backgroundColor: Colors.blue,
               ),
             ),
-            
+
             const SizedBox(height: 24),
-            
+
             // Info text
             const Card(
-              elevation: 2,
               child: Padding(
                 padding: EdgeInsets.all(16.0),
                 child: Text(

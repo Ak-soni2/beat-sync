@@ -1,5 +1,4 @@
 // lib/home_screen.dart
-
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:beat_sync/create_room_screen.dart';
 import 'package:beat_sync/join_room_screen.dart';
 import 'package:beat_sync/room_screen.dart';
+import 'package:beat_sync/create_playlist_screen.dart'; // Import for Playlist Screen
+import 'package:google_fonts/google_fonts.dart'; // Add for fonts
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,13 +16,21 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   Future<List<Map<String, dynamic>>>? _hostedRoomsFuture;
   List<String> _recentlyJoinedRoomIds = [];
+  // Future for fetching full data of recently joined rooms
+  Future<List<Map<String, dynamic>>>? _recentlyJoinedRoomsFuture;
+  late AnimationController _animationController;
 
   @override
   void initState() {
     super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true); // For pulsing animations
     _loadRecentlyJoinedRooms();
     _loadRooms();
   }
@@ -33,32 +42,43 @@ class _HomeScreenState extends State<HomeScreen> {
     final List<dynamic> roomIds = jsonDecode(recentlyJoinedRoomsJson);
     setState(() {
       _recentlyJoinedRoomIds = List<String>.from(roomIds);
+      // Fetch full data for the recently joined rooms
+      _loadRecentlyJoinedRoomsData();
+    });
+  }
+
+  // Fetches full room data (id, name) for the UI
+  void _loadRecentlyJoinedRoomsData() {
+    if (_recentlyJoinedRoomIds.isEmpty) {
+      setState(() {
+        _recentlyJoinedRoomsFuture = Future.value([]); // Return an empty future
+      });
+      return;
+    }
+    setState(() {
+      _recentlyJoinedRoomsFuture = Supabase.instance.client
+          .from('rooms')
+          .select('id, name')
+          .inFilter('id', _recentlyJoinedRoomIds); // Corrected method name
     });
   }
 
   Future<void> _saveRecentlyJoinedRoom(String roomId) async {
-    // Add the room ID to the beginning of the list
-    final updatedList = [_recentlyJoinedRoomIds, roomId]
-        .expand((x) => x is Iterable ? x : [x])
-        .toList();
+    final updatedList = List<String>.from(_recentlyJoinedRoomIds);
 
-    // Remove duplicates while preserving order
-    final uniqueList = <String>[];
-    for (final id in updatedList) {
-      if (!uniqueList.contains(id)) {
-        uniqueList.add(id);
-      }
-    }
+    // Remove if exists, then add to the front to mark it as most recent
+    updatedList.remove(roomId);
+    updatedList.insert(0, roomId);
 
     // Keep only the last 10 rooms
-    if (uniqueList.length > 10) {
-      uniqueList.removeRange(10, uniqueList.length);
-    }
+    final uniqueList = updatedList.take(10).toList();
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('recently_joined_rooms', jsonEncode(uniqueList));
     setState(() {
       _recentlyJoinedRoomIds = uniqueList;
+      // Refresh the room data when the list changes
+      _loadRecentlyJoinedRoomsData();
     });
   }
 
@@ -70,6 +90,8 @@ class _HomeScreenState extends State<HomeScreen> {
     await prefs.setString('recently_joined_rooms', jsonEncode(updatedList));
     setState(() {
       _recentlyJoinedRoomIds = updatedList;
+      // Refresh the room data when the list changes
+      _loadRecentlyJoinedRoomsData();
     });
   }
 
@@ -85,255 +107,105 @@ class _HomeScreenState extends State<HomeScreen> {
             .eq('host_id', userId);
       });
     }
+    // Refresh recently joined rooms data as well
+    _loadRecentlyJoinedRoomsData();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('BeatSync'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadRooms,
-          )
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 600) {
-            // Mobile layout
-            return _buildMobileLayout();
-          } else {
-            // Tablet/Desktop layout
-            return _buildTabletLayout();
-          }
-        },
-      ),
-    );
-  }
-
-  Widget _buildMobileLayout() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Welcome section with app title
-          Card(
-            elevation: 4,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16.0),
+      body: CustomScrollView(
+        // For smooth scrolling
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 200,
+            flexibleSpace: FlexibleSpaceBar(
+              title: Text('BeatSync',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
+              background: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Colors.blue, Colors.black]),
+                ),
+                child: Center(
+                    child: ScaleTransition(
+                        scale: _animationController,
+                        child: const Icon(Icons.music_note, size: 100))),
+              ),
             ),
+          ),
+          SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.all(16.0),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(
-                    Icons.music_note,
-                    size: 48,
-                    color: Theme.of(context).colorScheme.primary,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: AnimatedScale(
+                          scale: 1.0,
+                          duration: const Duration(milliseconds: 300),
+                          child: FilledButton.icon(
+                            icon: const Icon(Icons.add_box),
+                            label: const Text('Create Room'),
+                            onPressed: () async {
+                              await Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) =>
+                                          const CreateRoomScreen()));
+                              _loadRooms();
+                            },
+                            style: FilledButton.styleFrom(
+                                backgroundColor: Colors.blue),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: FilledButton.icon(
+                          icon: const Icon(Icons.qr_code_scanner),
+                          label: const Text('Join Room'),
+                          onPressed: () async {
+                            await Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => const JoinRoomScreen()));
+                            _loadRooms();
+                          },
+                          style: FilledButton.styleFrom(
+                              backgroundColor: Colors.blue),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'BeatSync',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.playlist_add),
+                    label: const Text('Manage Playlists'),
+                    onPressed: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const CreatePlaylistScreen()));
+                    },
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Sync your music with friends in real-time',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.grey,
-                    ),
-                  ),
+                  const SizedBox(height: 32),
+                  const Text('Hosted Rooms',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  _buildHostedRoomsList(),
+                  const SizedBox(height: 32),
+                  const Text('Recently Joined Rooms',
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  _buildRecentlyJoinedRoomsList(),
                 ],
               ),
             ),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Action buttons
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.add_box),
-                  label: const Text('Create Room'),
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const CreateRoomScreen()));
-                    _loadRooms(); // Refresh when returning
-                  },
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.qr_code_scanner),
-                  label: const Text('Join Room'),
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const JoinRoomScreen()));
-                    _loadRooms(); // Refresh when returning
-                  },
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 32),
-
-          // Hosted Rooms section
-          const Text(
-            'Hosted Rooms',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            flex: 1,
-            child: _buildHostedRoomsList(),
-          ),
-
-          const SizedBox(height: 32),
-
-          // Recently Joined Rooms section
-          const Text(
-            'Recently Joined Rooms',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            flex: 1,
-            child: _buildRecentlyJoinedRoomsList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabletLayout() {
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Welcome section with app title
-          Card(
-            elevation: 6,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20.0),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.music_note,
-                    size: 56,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(width: 20),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'BeatSync',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Sync your music with friends in real-time',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 32),
-
-          // Action buttons
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.add_box, size: 28),
-                  label: const Text(
-                    'Create a New Room',
-                    style: TextStyle(fontSize: 18),
-                  ),
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const CreateRoomScreen()));
-                    _loadRooms(); // Refresh when returning
-                  },
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 24),
-              Expanded(
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.qr_code_scanner, size: 28),
-                  label: const Text(
-                    'Join a Room',
-                    style: TextStyle(fontSize: 18),
-                  ),
-                  onPressed: () async {
-                    await Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const JoinRoomScreen()));
-                    _loadRooms(); // Refresh when returning
-                  },
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 40),
-
-          // Hosted Rooms section
-          const Text(
-            'Hosted Rooms',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            flex: 1,
-            child: _buildHostedRoomsList(),
-          ),
-
-          const SizedBox(height: 40),
-
-          // Recently Joined Rooms section
-          const Text(
-            'Recently Joined Rooms',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-          Expanded(
-            flex: 1,
-            child: _buildRecentlyJoinedRoomsList(),
           ),
         ],
       ),
@@ -349,7 +221,6 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
           return Card(
-            elevation: 2,
             child: Padding(
               padding: const EdgeInsets.all(20.0),
               child: Text(
@@ -364,46 +235,37 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
         final rooms = snapshot.data!;
-        return Card(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12.0),
-          ),
-          child: ListView.builder(
-            itemCount: rooms.length,
-            itemBuilder: (context, index) {
-              final room = rooms[index];
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor:
-                      Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                  child: Icon(
-                    Icons.key,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-                title: Text(
-                  room['name'],
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                ),
-                subtitle: Text('ID: ${room['id']}'),
-                trailing: Icon(
-                  Icons.arrow_forward_ios,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                onTap: () => _handleRoomTap(room['id'], isHost: true),
-              );
-            },
-          ),
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: rooms.length,
+          itemBuilder: (context, index) {
+            final room = rooms[index];
+            // dart
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.green.withOpacity(0.1),
+                child: Icon(Icons.key, color: Colors.blue),
+              ),
+              title: Text(
+                room['name'],
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: Text('ID: ${room['id']}'),
+              trailing: Icon(Icons.arrow_forward_ios, color: Colors.blue),
+              onTap: () => _handleRoomTap(room['id'], isHost: true),
+            );
+          },
         );
       },
     );
   }
 
+  // dart
+// file: 'lib/home_screen.dart'
   Widget _buildRecentlyJoinedRoomsList() {
     if (_recentlyJoinedRoomIds.isEmpty) {
       return Card(
-        elevation: 2,
         child: Padding(
           padding: const EdgeInsets.all(20.0),
           child: Text(
@@ -418,86 +280,94 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12.0),
-      ),
-      child: SizedBox(
-        height: 180,
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          itemCount: _recentlyJoinedRoomIds.length,
-          itemBuilder: (context, index) {
-            final roomId = _recentlyJoinedRoomIds[index];
-            return Card(
-              margin: const EdgeInsets.all(12.0),
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16.0),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12.0),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .primary
-                            .withOpacity(0.1),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.room,
-                        size: 36,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      roomId.substring(
-                              0, roomId.length > 10 ? 10 : roomId.length) +
-                          (roomId.length > 10 ? '...' : ''),
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.login, size: 20),
-                          onPressed: () =>
-                              _handleRoomTap(roomId, isHost: false),
-                          tooltip: 'Join Room',
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _recentlyJoinedRoomsFuture,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return const Center(child: Text('Could not load rooms.'));
+        }
+
+        final rooms = snapshot.data!;
+
+        final orderedRooms = <Map<String, dynamic>>[];
+        for (final id in _recentlyJoinedRoomIds) {
+          final room = rooms.firstWhere((r) => r['id'] == id, orElse: () => {});
+          if (room.isNotEmpty) {
+            orderedRooms.add(room);
+          }
+        }
+
+        return SizedBox(
+          height: 180,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: orderedRooms.length,
+            itemBuilder: (context, index) {
+              final room = orderedRooms[index];
+              final roomId = room['id'] as String;
+              final roomName = room['name'] as String;
+
+              return Card(
+                margin: const EdgeInsets.all(12.0),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12.0),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.1),
+                          shape: BoxShape.circle,
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.close, size: 20),
-                          onPressed: () => _removeRecentlyJoinedRoom(roomId),
-                          tooltip: 'Remove from List',
+                        child: const Icon(
+                          Icons.room,
+                          size: 36,
+                          color: Colors.blue,
                         ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        roomName,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.login, size: 20),
+                            onPressed: () =>
+                                _handleRoomTap(roomId, isHost: false),
+                            tooltip: 'Join Room',
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () => _removeRecentlyJoinedRoom(roomId),
+                            tooltip: 'Remove from List',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
-        ),
-      ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
-  // ✅ NEW: Logic to handle tapping on a room, with a check for rejoining
   Future<void> _handleRoomTap(String roomId, {required bool isHost}) async {
     if (!isHost) {
-      // For listeners, check if the room still exists before trying to join
       final roomResponse = await Supabase.instance.client
           .from('rooms')
           .select('id')
@@ -511,21 +381,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 content: Text('This room has been ended by the host.')),
           );
         }
-        _loadRooms(); // Refresh the list to remove the ended room
-        _removeRecentlyJoinedRoom(roomId); // Remove from recently joined
+        _loadRooms();
+        _removeRecentlyJoinedRoom(roomId);
         return;
       }
 
-      // Save to recently joined rooms
       await _saveRecentlyJoinedRoom(roomId);
     }
 
-    // If the room exists or if the user is the host, navigate to the screen
     if (mounted) {
       await Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => RoomScreen(roomId: roomId)),
       );
-      _loadRooms(); // Always refresh after returning from a room screen
+      _loadRooms();
     }
   }
 }

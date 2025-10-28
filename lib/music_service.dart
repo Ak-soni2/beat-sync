@@ -1,11 +1,12 @@
 // lib/music_service.dart
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class MusicService {
   // ✅ IMPORTANT: Replace with your computer's local IP address
-  static const String _baseUrl = 'http://172.31.29.118:3000';
+  // static const String _baseUrl = 'http://local ip address:port no.';
+  static const String _baseUrl = 'https://beat-sync-backend.vercel.app';
+  // static const String _baseUrl = 'http://172.31.29.118:3000';
 
   // Fetches the list of all available songs from your backend
   static Future<List<String>> fetchSongs() async {
@@ -15,7 +16,8 @@ class MusicService {
         final List<dynamic> data = json.decode(response.body);
         return data.map((song) => song['name'] as String).toList();
       } else {
-        throw Exception('Failed to load songs from backend');
+        throw Exception(
+            'Failed to load songs from backend: ${response.statusCode}');
       }
     } catch (e) {
       // Handle connection errors, etc.
@@ -35,7 +37,7 @@ class MusicService {
         final data = json.decode(response.body);
         return data['url'];
       } else {
-        throw Exception('Failed to get signed URL');
+        throw Exception('Failed to get signed URL: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Could not connect to the server: $e');

@@ -1,12 +1,13 @@
 // lib/song_selection_screen.dart
-
-import 'dart:async'; // Import async for Timer
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart';
 import 'package:beat_sync/audio_player_service.dart';
 import 'package:beat_sync/music_service.dart';
 import 'package:beat_sync/sync_service.dart';
+import 'package:beat_sync/caching_service.dart';
+import 'package:beat_sync/create_playlist_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class SongSelectionScreen extends StatefulWidget {
   final String roomId;
@@ -17,73 +18,109 @@ class SongSelectionScreen extends StatefulWidget {
 }
 
 class _SongSelectionScreenState extends State<SongSelectionScreen> {
-  List<String> _songList = [];
-  bool _isLoadingSongs = false;
-  String? _currentlyPlayingSong;
-
-  // Timer to periodically update the host's position
-  Timer? _positionSyncTimer;
+  Future<List<Map<String, dynamic>>>? _playlistsFuture;
+  bool _isActivatingPlaylist = false;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
-    _fetchSongList();
+    _fetchPlaylists();
   }
 
-  Future<void> _fetchSongList() async {
-    setState(() => _isLoadingSongs = true);
+  Future<void> _fetchPlaylists() async {
+    final prefs = await SharedPreferences.getInstance();
+    _currentUserId = prefs.getString('user_id');
+    if (_currentUserId == null) return;
+
+    setState(() {
+      _playlistsFuture = Supabase.instance.client
+          .from('playlists')
+          .select('id, name')
+          .eq('host_id', _currentUserId!);
+    });
+  }
+
+  Future<void> _onPlaylistSelected(
+      String playlistId, String playlistName) async {
+    if (_isActivatingPlaylist) return;
+    setState(() => _isActivatingPlaylist = true);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 20),
+            Text('Caching songs...'),
+          ],
+        ),
+      ),
+    );
+
     try {
-      final songs = await MusicService.fetchSongs();
-      setState(() => _songList = songs);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error fetching songs: ${e.toString()}')));
+      final songsData = await Supabase.instance.client
+          .from('playlist_songs')
+          .select('song_name')
+          .eq('playlist_id', playlistId)
+          .order('sequence', ascending: true);
+
+      if (songsData.isEmpty) {
+        throw Exception('This playlist is empty.');
       }
-    } finally {
-      setState(() => _isLoadingSongs = false);
-    }
-  }
+      final playlistSongs =
+          songsData.map((s) => s['song_name'] as String).toList();
+      final firstSong = playlistSongs[0];
 
-  Future<void> _onSongSelected(String songName) async {
-    try {
-      // Cancel any existing timer before starting a new song
-      _positionSyncTimer?.cancel();
+      await CachingService.instance.cacheSong(firstSong);
+      if (playlistSongs.length > 1) {
+        CachingService.instance.cacheSong(playlistSongs[1]);
+      }
 
-      final signedUrl = await MusicService.fetchSignedUrl(songName);
+      final localPath =
+          await CachingService.instance.getCachedSongPath(firstSong);
+      if (localPath == null) {
+        throw Exception('Failed to cache and retrieve the first song.');
+      }
+
+      final signedUrl = await MusicService.fetchSignedUrl(firstSong);
+
       final player = AudioPlayerService.instance.player;
-
-      await player.setUrl(signedUrl);
+      await player.setFilePath(localPath);
       player.play();
 
-      setState(() {
-        _currentlyPlayingSong = songName;
-      });
-
-      // Initial update to Supabase to start the song for everyone
       await Supabase.instance.client.from('rooms').update({
-        'current_song_name': songName,
+        'active_playlist_id': playlistId,
+        'current_song_sequence': 0,
+        'current_song_name': firstSong,
         'current_song_url': signedUrl,
         'is_playing': true,
         'current_position_seconds': 0.0,
         'last_updated_at': DateTime.now().toUtc().toIso8601String(),
       }).eq('id', widget.roomId);
 
-      // Use the sync service for more precise position updates
       SyncService().startHostPositionUpdates(widget.roomId);
+
+      if (mounted) {
+        Navigator.of(context).pop(); // Close dialog
+        Navigator.of(context).pop(); // Close this screen
+      }
     } catch (e) {
       if (mounted) {
+        Navigator.of(context).pop(); // Close dialog
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error playing song: ${e.toString()}')));
+          SnackBar(content: Text('Error starting playlist: ${e.toString()}')),
+        );
       }
+    } finally {
+      setState(() => _isActivatingPlaylist = false);
     }
   }
 
   @override
   void dispose() {
-    // Make sure to cancel the timer when the screen is closed
-    _positionSyncTimer?.cancel();
-    // Stop host position updates
     SyncService().stopHostPositionUpdates();
     super.dispose();
   }
@@ -92,74 +129,77 @@ class _SongSelectionScreenState extends State<SongSelectionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Select a Song'),
+        title: Text('Select a Playlist', style: GoogleFonts.poppins()),
         elevation: 4,
       ),
-      body: _isLoadingSongs
-          ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-              itemCount: _songList.length,
-              itemBuilder: (context, index) {
-                final songName = _songList[index];
-                final isCurrentlyThisSong = songName == _currentlyPlayingSong;
-                return StreamBuilder<PlayerState>(
-                  stream: AudioPlayerService.instance.player.playerStateStream,
-                  builder: (context, snapshot) {
-                    final isPlaying = snapshot.data?.playing ?? false;
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _playlistsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('You haven\'t created any playlists yet.'),
+                  const SizedBox(height: 10),
+                  ElevatedButton(
+                    onPressed: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const CreatePlaylistScreen(),
+                        ),
+                      );
+                      _fetchPlaylists();
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                    ),
+                    child: const Text('Create one?'),
+                  ),
+                ],
+              ),
+            );
+          }
 
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 6),
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12.0),
-                      ),
-                      child: ListTile(
-                        leading: Icon(
-                          (isPlaying && isCurrentlyThisSong)
-                              ? Icons.volume_up
-                              : Icons.music_note,
-                          color: (isPlaying && isCurrentlyThisSong)
-                              ? Theme.of(context).colorScheme.primary
-                              : Colors.grey,
-                        ),
-                        title: Text(
-                          songName.replaceAll('.mp3', ''),
-                          style: TextStyle(
-                            fontWeight: isCurrentlyThisSong
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                            color: isCurrentlyThisSong
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
-                          ),
-                        ),
-                        trailing: isCurrentlyThisSong
-                            ? Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8.0,
-                                  vertical: 4.0,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(12.0),
-                                ),
-                                child: const Text(
-                                  'Playing',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              )
-                            : null,
-                        onTap: () => _onSongSelected(songName),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+          final playlists = snapshot.data!;
+          return ListView.builder(
+            itemCount: playlists.length,
+            itemBuilder: (context, index) {
+              final playlist = playlists[index];
+              final playlistName = playlist['name'] as String;
+              final playlistId = playlist['id'] as String;
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12.0),
+                ),
+                child: ListTile(
+                  leading: const Icon(Icons.playlist_play, color: Colors.blue),
+                  title: Text(
+                    playlistName,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  trailing: _isActivatingPlaylist
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        )
+                      : const Icon(Icons.play_arrow),
+                  onTap: () => _onPlaylistSelected(playlistId, playlistName),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }

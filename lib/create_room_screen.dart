@@ -1,7 +1,9 @@
+// lib/create_room_screen.dart
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:beat_sync/room_screen.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class CreateRoomScreen extends StatefulWidget {
   const CreateRoomScreen({super.key});
@@ -10,9 +12,20 @@ class CreateRoomScreen extends StatefulWidget {
   State<CreateRoomScreen> createState() => _CreateRoomScreenState();
 }
 
-class _CreateRoomScreenState extends State<CreateRoomScreen> {
+class _CreateRoomScreenState extends State<CreateRoomScreen>
+    with SingleTickerProviderStateMixin {
   final _roomNameController = TextEditingController();
   bool _isLoading = false;
+  late AnimationController _animationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      // duration: const Duration(milliseconds: 800),
+      vsync: this,
+    )..forward();
+  }
 
   Future<void> _createRoom() async {
     setState(() => _isLoading = true);
@@ -65,6 +78,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   @override
   void dispose() {
     _roomNameController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -72,7 +86,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create a Room'),
+        title: Text('Create a Room', style: GoogleFonts.poppins()),
         elevation: 4,
       ),
       body: Padding(
@@ -81,15 +95,18 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Header with icon
-            Icon(
-              Icons.music_note,
-              size: 64,
-              color: Theme.of(context).colorScheme.primary,
+            ScaleTransition(
+              scale: _animationController,
+              child: Icon(
+                Icons.music_note,
+                size: 64,
+                color: Colors.blue,
+              ),
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Create a New Room',
-              style: TextStyle(
+              style: GoogleFonts.poppins(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -101,15 +118,14 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
-                color: Colors.grey,
+                color: Colors.blue,
               ),
             ),
-            
+
             const SizedBox(height: 40),
 
             // Room name input with enhanced styling
             Card(
-              elevation: 4,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16.0),
               ),
@@ -135,7 +151,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                           borderSide: BorderSide.none,
                         ),
                         filled: true,
-                        fillColor: Colors.grey[100],
+                        fillColor: Colors.black12,
                         prefixIcon: const Icon(Icons.meeting_room),
                       ),
                       style: const TextStyle(fontSize: 18),
@@ -146,7 +162,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 ),
               ),
             ),
-            
+
             const SizedBox(height: 32),
 
             // Create button with enhanced styling
@@ -157,13 +173,15 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16.0),
                 ),
+                backgroundColor: Colors.blue,
               ),
               child: _isLoading
                   ? const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                         SizedBox(width: 16),
                         Text(
@@ -184,12 +202,11 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
                       ],
                     ),
             ),
-            
+
             const SizedBox(height: 24),
-            
+
             // Info text
             const Card(
-              elevation: 2,
               child: Padding(
                 padding: EdgeInsets.all(16.0),
                 child: Text(

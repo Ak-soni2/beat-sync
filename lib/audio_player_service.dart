@@ -1,5 +1,4 @@
 // lib/audio_player_service.dart
-
 import 'package:just_audio/just_audio.dart';
 
 /// A singleton service to manage a single, shared AudioPlayer instance.

@@ -3,8 +3,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart' as ja;
+import 'package:audio_waveforms/audio_waveforms.dart';
 import 'package:beat_sync/audio_player_service.dart';
+import 'package:beat_sync/caching_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class NowPlayingSheet extends StatefulWidget {
   final String roomId;
@@ -25,58 +28,98 @@ class NowPlayingSheet extends StatefulWidget {
 class _NowPlayingSheetState extends State<NowPlayingSheet>
     with SingleTickerProviderStateMixin {
   late final StreamSubscription<ja.PlayerState> _playerStateSubscription;
-  late final AnimationController _animationController;
+  late final AnimationController _pulseController;
+  late final PlayerController _waveformController;
+
   bool _isPlaying = false;
+  bool _isLoading = true;
+  String? _waveformPath;
 
   @override
   void initState() {
     super.initState();
 
-    // Animation controller for waveform animation
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 1000),
+    // Pulse animation for play button
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 800),
       vsync: this,
-    )..repeat();
+    );
 
-    // Listen to the audio player's state to control the play/pause button
+    // Initialize waveform controller (NO setRefreshRate!)
+    _waveformController = PlayerController();
+
     _playerStateSubscription =
         AudioPlayerService.instance.player.playerStateStream.listen((state) {
-      if (mounted) {
-        setState(() {
-          _isPlaying = state.playing;
-          if (_isPlaying) {
-            _animationController.repeat();
-          } else {
-            _animationController.stop();
-          }
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _isPlaying = state.playing;
+        if (_isPlaying) {
+          _pulseController.repeat(reverse: true);
+          _waveformController.startPlayer();
+        } else {
+          _pulseController.stop();
+          _waveformController.stopPlayer();
+        }
+      });
     });
+
+    _initializeWaveform();
+  }
+
+  Future<void> _initializeWaveform() async {
+    try {
+      final localPath =
+          await CachingService.instance.getCachedSongPath(widget.songName);
+
+      if (localPath != null && mounted) {
+        await _waveformController.preparePlayer(
+          path: localPath,
+          shouldExtractWaveform: true,
+        );
+
+        if (mounted) {
+          setState(() {
+            _waveformPath = localPath;
+            _isLoading = false;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
+    } catch (e) {
+      debugPrint('Waveform init error: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
   void dispose() {
     _playerStateSubscription.cancel();
-    _animationController.dispose();
+    _pulseController.dispose();
+    _waveformController.dispose();
     super.dispose();
   }
 
   Future<void> _togglePlayPause(ja.PlayerState playerState) async {
-    // Only hosts can control playback
     if (!widget.isHost) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Only the host can control playback'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only the host can control playback'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
       return;
     }
 
     final player = AudioPlayerService.instance.player;
     final isPlaying = playerState.playing;
+    final position = player.position.inMilliseconds / 1000.0;
+    final now = DateTime.now().toUtc().toIso8601String();
 
     if (isPlaying) {
       await player.pause();
@@ -84,221 +127,254 @@ class _NowPlayingSheetState extends State<NowPlayingSheet>
       await player.play();
     }
 
-    await Supabase.instance.client
-        .from('rooms')
-        .update({'is_playing': !isPlaying}).eq('id', widget.roomId);
+    await Supabase.instance.client.from('rooms').update({
+      'is_playing': !isPlaying,
+      'current_position_seconds': position,
+      'last_updated_at': now,
+    }).eq('id', widget.roomId);
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Container(
-      padding: const EdgeInsets.all(20.0),
-      height: 320, // Reduced height to prevent overflow
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
+      height: MediaQuery.of(context).size.height * 0.45,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Theme.of(context).colorScheme.primary.withOpacity(0.1),
-            Theme.of(context).colorScheme.surface,
+            theme.colorScheme.primary.withOpacity(0.15),
+            theme.colorScheme.surface.withOpacity(0.9),
+            theme.colorScheme.surface,
           ],
         ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 20,
+            offset: const Offset(0, -5),
+          ),
+        ],
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          // Song title with better styling
+          // Handle bar
+          Container(
+            width: 50,
+            height: 5,
+            decoration: BoxDecoration(
+              color: Colors.grey[600],
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Song Title
           Text(
             widget.songName.replaceAll('.mp3', ''),
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+            style: GoogleFonts.poppins(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.onSurface,
+            ),
             textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          
-          const SizedBox(height: 12),
 
-          // Enhanced waveform visualization
+          const SizedBox(height: 8),
+          Text(
+            _isPlaying ? 'Now Playing' : 'Paused',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: _isPlaying ? theme.colorScheme.primary : Colors.grey[500],
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          // Waveform Visualization
           Container(
-            width: MediaQuery.of(context).size.width * 0.9,
-            height: 90.0, // Reduced height
+            height: 100,
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.grey[800],
-              borderRadius: BorderRadius.circular(12.0),
+              color: isDark ? Colors.grey[900] : Colors.grey[100],
+              borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 8,
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 12,
                   offset: const Offset(0, 4),
                 ),
               ],
             ),
-            child: CustomPaint(
-              painter: AnimatedWaveformPainter(_isPlaying, _animationController),
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                : _waveformPath != null
+                    ? AudioFileWaveforms(
+                        size: Size(MediaQuery.of(context).size.width, 80),
+                        playerController: _waveformController,
+                        waveformType: WaveformType.long,
+                        playerWaveStyle: PlayerWaveStyle(
+                          fixedWaveColor:
+                              theme.colorScheme.primary.withOpacity(0.3),
+                          liveWaveColor: theme.colorScheme.primary,
+                          spacing: 5,
+                          waveThickness: 3,
+                          scaleFactor: 120,
+                        ),
+                      )
+                    : Center(
+                        child: Text(
+                          'Waveform unavailable',
+                          style: TextStyle(color: Colors.grey[500]),
+                        ),
+                      ),
           ),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 28),
 
-          // Enhanced player controls
+          // Playback Controls
           StreamBuilder<ja.PlayerState>(
             stream: AudioPlayerService.instance.player.playerStateStream,
             builder: (context, snapshot) {
               final playerState = snapshot.data;
-              final processingState = playerState?.processingState;
-              final isPlaying = playerState?.playing ?? false;
-
-              if (processingState == ja.ProcessingState.loading ||
-                  processingState == ja.ProcessingState.buffering) {
-                return const CircularProgressIndicator();
-              }
+              final isBuffering = playerState?.processingState ==
+                      ja.ProcessingState.buffering ||
+                  playerState?.processingState == ja.ProcessingState.loading;
 
               return Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Previous button (placeholder) - only for host
-                  IconButton(
-                    icon: Icon(
-                      Icons.skip_previous,
-                      color: widget.isHost 
-                          ? Theme.of(context).colorScheme.primary 
-                          : Colors.grey,
-                      size: 36, // Reduced size
-                    ),
+                  // Previous
+                  _ControlButton(
+                    icon: Icons.skip_previous_rounded,
                     onPressed: widget.isHost ? () {} : null,
+                    size: 50,
                   ),
-                  
-                  const SizedBox(width: 16),
 
-                  // Play/Pause button with better styling
-                  Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
-                          blurRadius: 10,
-                          spreadRadius: 2,
-                        ),
-                      ],
+                  const SizedBox(width: 20),
+
+                  // Play/Pause (Pulsing)
+                  ScaleTransition(
+                    scale: Tween<double>(begin: 1.0, end: 1.15).animate(
+                      CurvedAnimation(
+                        parent: _pulseController,
+                        curve: Curves.easeInOut,
+                      ),
                     ),
-                    child: CircleAvatar(
-                      radius: 30, // Reduced radius
-                      backgroundColor: Theme.of(context).colorScheme.primary,
-                      child: IconButton(
-                        icon: Icon(
-                          isPlaying
-                              ? Icons.pause_circle_filled
-                              : Icons.play_circle_filled,
-                          color: Colors.white,
-                          size: 45, // Reduced size
-                        ),
-                        onPressed: widget.isHost
-                            ? () => _togglePlayPause(playerState!)
-                            : () {
-                                // Show message to listeners that they can't control playback
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Only the host can control playback'),
-                                    duration: Duration(seconds: 2),
-                                  ),
-                                );
-                              },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: theme.colorScheme.primary.withOpacity(0.4),
+                            blurRadius: 16,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: CircleAvatar(
+                        radius: 34,
+                        backgroundColor: theme.colorScheme.primary,
+                        child: isBuffering
+                            ? const SizedBox(
+                                width: 28,
+                                height: 28,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 3,
+                                ),
+                              )
+                            : IconButton(
+                                icon: Icon(
+                                  _isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: Colors.white,
+                                  size: 38,
+                                ),
+                                onPressed: widget.isHost
+                                    ? () => _togglePlayPause(playerState!)
+                                    : null,
+                              ),
                       ),
                     ),
                   ),
-                  
-                  const SizedBox(width: 16),
 
-                  // Next button (placeholder) - only for host
-                  IconButton(
-                    icon: Icon(
-                      Icons.skip_next,
-                      color: widget.isHost 
-                          ? Theme.of(context).colorScheme.primary 
-                          : Colors.grey,
-                      size: 36, // Reduced size
-                    ),
+                  const SizedBox(width: 20),
+
+                  // Next
+                  _ControlButton(
+                    icon: Icons.skip_next_rounded,
                     onPressed: widget.isHost ? () {} : null,
+                    size: 50,
                   ),
                 ],
               );
             },
           ),
-          
-          const SizedBox(height: 4),
-          
-          // Progress indicator text
-          Text(
-            _isPlaying ? 'Now Playing' : 'Paused',
-            style: TextStyle(
-              color: _isPlaying 
-                  ? Theme.of(context).colorScheme.primary 
-                  : Colors.grey[600],
-              fontWeight: FontWeight.w500,
-              fontSize: 14, // Reduced font size
-            ),
-          ),
+
+          const Spacer(),
         ],
       ),
     );
   }
 }
 
-// Enhanced animated waveform painter
-class AnimatedWaveformPainter extends CustomPainter {
-  final bool isPlaying;
-  final AnimationController animationController;
-  final Paint _paint;
+// Reusable Control Button
+class _ControlButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final double size;
 
-  AnimatedWaveformPainter(this.isPlaying, this.animationController)
-      : _paint = Paint()
-          ..style = PaintingStyle.fill,
-        super(repaint: animationController);
+  const _ControlButton({
+    required this.icon,
+    this.onPressed,
+    this.size = 48,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final double barWidth = 4.0;
-    final double spacing = 3.0;
-    final int barCount = (size.width / (barWidth + spacing)).floor();
-    
-    final double centerY = size.height / 2;
-    final double maxHeight = size.height * 0.7;
-    
-    for (int i = 0; i < barCount; i++) {
-      // Calculate animation progress
-      final double animationValue = isPlaying 
-          ? (animationController.value + i * 0.05) % 1.0 
-          : 0.3;
-      
-      // Create animated effect when playing
-      final double baseHeight = maxHeight * 0.3;
-      final double animatedHeight = isPlaying
-          ? baseHeight + (maxHeight * 0.7 * animationValue)
-          : baseHeight;
-      
-      // Set color based on position and state
-      final double hue = (i / barCount) * 360;
-      _paint.color = isPlaying
-          ? HSLColor.fromAHSL(1.0, hue, 0.8, 0.6).toColor()
-          : Colors.grey[600]!;
-      
-      final double x = i * (barWidth + spacing);
-      final double top = centerY - animatedHeight / 2;
-      final double bottom = centerY + animatedHeight / 2;
-      
-      // Draw rounded rectangles for better visual appeal
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, top, barWidth, animatedHeight),
-          Radius.circular(barWidth / 2),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final enabled = onPressed != null;
+
+    return AnimatedOpacity(
+      opacity: enabled ? 1.0 : 0.4,
+      duration: const Duration(milliseconds: 200),
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: enabled
+              ? theme.colorScheme.surface.withOpacity(0.8)
+              : Colors.transparent,
+          boxShadow: enabled
+              ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                  ),
+                ]
+              : null,
         ),
-        _paint,
-      );
-    }
+        child: IconButton(
+          icon: Icon(
+            icon,
+            size: 28,
+            color: enabled ? theme.colorScheme.primary : Colors.grey,
+          ),
+          onPressed: onPressed,
+        ),
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
