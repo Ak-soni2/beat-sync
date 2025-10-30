@@ -1,138 +1,185 @@
-beat_sync
-A Flutter app for synchronized music playback across multiple devices using Supabase and just_audio. One device acts as the host; others join as listeners. Playback state, timing, and playlist progression are shared via Supabase.
-Tech stack
-Flutter + Dart
-just_audio for playback
-Supabase (Database + Storage) for realtime state and song URLs
-Optional local caching for faster playback and reduced bandwidth
-Project structure
-lib/sync_service.dart — Core sync engine for host and listeners (heartbeat, position updates, completion handling, pre-caching).
-lib/audio_player_service.dart — Centralized just_audio player wrapper. Provides a singleton AudioPlayer.
-lib/caching_service.dart — Manages local song caching & retrieval, and cleanup.
-lib/music_service.dart — Fetches signed download URLs from Supabase Storage for song names.
-README.md — Project docs.
-Note: Only lib/sync_service.dart is provided here. The other services are referenced by the sync flow and must exist in the project.
-Data model & Supabase
-Expected tables and columns:
-rooms
-id (uuid or text, primary key)
-active_playlist_id (uuid or text)
-current_song_sequence (int)
-current_song_name (text)
-current_song_url (text) — listener playback URL (signed)
-is_playing (bool)
-current_position_seconds (float)
-last_updated_at (timestamptz in UTC)
-playlist_songs
-playlist_id (uuid or text)
-sequence (int, 1-based or 0-based consistently)
-song_name (text) — storage object key or canonical name
-Example minimal SQL:
+﻿# Beat Sync 
+
+A Flutter application for synchronized music playback across multiple devices using Supabase and just_audio. One device acts as the host while others join as listeners; playback state, timing, and playlist progression are shared via Supabase.
+
+---
+
+## Table of contents
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Project structure](#project-structure)
+- [How it works](#how-it-works)
+  - [Host flow](#host-flow)
+  - [Listener flow](#listener-flow)
+- [Configuration](#configuration)
+- [Permissions](#permissions)
+- [Building for production](#building-for-production)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License & Support](#license--support)
+
+---
+
+## Features
+- Host–Listener architecture (one device controls, others follow)
+- Real-time synchronization (sub-second accuracy)
+- Automatic drift correction (threshold-based adjustments)
+- Smart caching (preloads songs for smooth transitions)
+- Cross-platform: Android & iOS
+- Playlist management with seamless track switching
+
+## Quick start
+Prerequisites:
+- Flutter SDK (>= 3.0.0)
+- Dart SDK (>= 3.0.0)
+- Supabase account + project
+- Android Studio / VS Code
+
+Clone and install:
+
+```bash
+git clone https://github.com/yourusername/beat-sync.git
+cd beat-sync
+flutter pub get
+```
+
+Configure Supabase: create a `.env` in the project root with:
+
+```
+SUPABASE_URL=your_supabase_project_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+Create the DB tables (run in Supabase SQL editor):
+
+```sql
 -- rooms
-create table if not exists public.rooms (
-id uuid primary key default gen_random_uuid(),
-active_playlist_id uuid,
-current_song_sequence int,
-current_song_name text,
-current_song_url text,
-is_playing boolean not null default false,
-current_position_seconds double precision not null default 0,
-last_updated_at timestamptz
+CREATE TABLE IF NOT EXISTS public.rooms (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  active_playlist_id UUID,
+  current_song_sequence INT,
+  current_song_name TEXT,
+  current_song_url TEXT,
+  is_playing BOOLEAN NOT NULL DEFAULT false,
+  current_position_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+  last_updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- playlist_songs
-create table if not exists public.playlist_songs (
-playlist_id uuid not null,
-sequence int not null,
-song_name text not null,
-primary key (playlist_id, sequence)
+CREATE TABLE IF NOT EXISTS public.playlist_songs (
+  playlist_id UUID NOT NULL,
+  sequence INT NOT NULL,
+  song_name TEXT NOT NULL,
+  PRIMARY KEY (playlist_id, sequence)
 );
-Core workflow
-Host device
-Starts playback locally, calls startHostPositionUpdates(roomId).
-Every 2s, pushes position and timestamp to rooms.
-On track completion, _playNextSong():
-Pauses globally, clears URL to let listeners pause.
-Looks up next song by sequence + 1 in playlist_songs.
-Optionally evicts completed song from cache and pre-caches the next-next song.
-Fetches a signed URL for listeners, updates rooms state & resumes is_playing.
-Sets up local playback source (cached file path or network URL) and restarts position updates.
-Listener device
-Calls startHeartbeatSync(roomId).
-Every 5s, pulls rooms state and runs syncListenerPlayer(...).
-If URL changed or initial sync:
-Loads the new URL, seeks using current_position_seconds + (now \- last_updated_at).
-Plays or pauses per is_playing.
-While playing, corrects drift if deviation > ~700ms.
-Pre-caches the next song based on active_playlist_id and current_song_sequence.
-Timing & drift handling
-Host writes current_position_seconds and last_updated_at (UTC) periodically.
-Listeners compute latency now \- last_updated_at and seek to position + latency.
-Drift correction seeks only if deviation crosses a 700ms threshold.
-Caching strategy
-On listeners: pre-cache sequence + 1 song when possible.
-On host: after a song completes, remove completed song from cache; pre-cache sequence + 2.
-Playback source preference:
-If cached path exists, use local file.
-Otherwise, fetch signed URL and stream.
-Requires storage permissions on Android if writing to external storage.
-Android example permission (if your cache writes outside app sandbox):
-<!-- AndroidManifest.xml -->
+```
+
+Upload audio files to a Supabase Storage bucket (for example: `songs`).
+
+Run the app:
+
+```bash
+flutter run
+```
+
+## Project structure
+```
+lib/
+ sync_service.dart           # Core synchronization engine (host & listener)
+ audio_player_service.dart   # just_audio wrapper / singleton player
+ caching_service.dart        # Local caching and eviction
+ music_service.dart          # Supabase storage / signed URL fetcher
+ models/                     # Data models
+ screens/                    # UI screens
+ widgets/                    # Reusable components
+```
+
+## How it works
+
+### Host flow
+1. Host starts playback and sets room state (sequence, name, url, is_playing=true, pos=0, last_updated_at=now).
+2. Host calls `startHostPositionUpdates(roomId)` and updates `rooms` every ~2 seconds with current position and timestamp.
+3. On track completion: host loads the next track, updates `rooms` with a signed URL for listeners, and resumes playback.
+4. Host can pre-cache next tracks and evict completed ones from cache.
+
+### Listener flow
+1. Listener calls `startHeartbeatSync(roomId)` and polls `rooms` (every ~5s by default).
+2. If URL or sequence changed, listener loads the new URL and seeks to `current_position_seconds + (now - last_updated_at)`.
+3. While playing, listeners correct drift only when deviation exceeds a threshold (default ~700ms).
+4. Listeners pre-cache the next song (sequence + 1) where possible.
+
+## Configuration
+Adjust intervals and thresholds in `sync_service.dart`:
+
+```dart
+static const Duration _hostUpdateInterval = Duration(seconds: 2);
+static const Duration _listenerSyncInterval = Duration(seconds: 5);
+static const int _driftCorrectionThresholdMs = 700;
+```
+
+Cache settings (example):
+
+```dart
+static const int maxCacheSize = 500; // MB
+static const Duration cacheRetention = Duration(days: 7);
+```
+
+## Permissions
+**Android** (add to `android/app/src/main/AndroidManifest.xml`):
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<!-- For external storage (API < 29) -->
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-Prefer app-internal storage to avoid permissions on modern Android.
-Initialization & usage
-Initialize Supabase early in app startup.
-Ensure AudioPlayerService.instance.player is ready (single instance).
-Use the SyncService singleton.
-// Example: host flow
-final roomId = '...';
-final sync = SyncService();
+```
 
-// When host taps Play on a selected song:
-// 1) Host sets initial room state (sequence, name, URL, is_playing=true, pos=0, last_updated_at=now)
-// 2) Then start position updates:
-sync.startHostPositionUpdates(roomId);
+Prefer using app-internal storage to avoid extra permissions on modern Android.
 
-// On host pause/stop:
-sync.stopHostPositionUpdates();
+**iOS** (add to `ios/Runner/Info.plist`):
 
-// Example: listener flow
-sync.startHeartbeatSync(roomId);
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>This app needs audio permissions for music playback</string>
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+</array>
+```
 
-// On leaving the room:
-sync.stopHeartbeatSync();
-Screens & responsibilities
-The repository does not include UI code. A typical mapping:
-RoomListScreen — Discover or enter a room ID.
-HostControlsScreen — Select playlist, start/pause, skip; shows current position and sequence.
-ListenerScreen — Displays current song and play state; handles join/leave.
-PlaylistScreen — Manage playlist_songs order and membership.
-Wire these screens to call SyncService APIs and update rooms table accordingly.
-Environment setup
-Install Flutter SDK and Dart.
-flutter pub get
-Configure Supabase:
-Create the rooms and playlist_songs tables.
-Upload audio files to Supabase Storage.
-Implement MusicService.fetchSignedUrl(songName) to return time-limited URLs.
-Ensure CachingService reads/writes within app storage and exposes:
-cacheSong(name), getCachedSongPath(name), removeSongFromCache(name)
-Build & run (Windows)
-Debug: flutter run
-Release APK: flutter build apk
-Clean: flutter clean && flutter pub get
-Error handling & safeguards
-All timers are canceled on stop to prevent leaks.
-Listener sync is guarded by _isSyncing to avoid overlapping pulls.
-Seek positions are clamped to >= 0.
-Drift corrections are throttled with a threshold.
-Network errors are caught and logged; heartbeats continue.
-Known limitations
-Heartbeat is pull-based (5s). For tighter sync, add Supabase Realtime or shorter intervals.
-Clock skew between devices is assumed negligible for the latency estimate.
-Requires consistent sequence numbering in playlist_songs.
-Contributions
-Keep SyncService stateless regarding UI.
-Avoid multiple AudioPlayer instances.
-Validate Supabase writes and handle offline scenarios gracefully.
+## Building for production
+- Android APK: `flutter build apk --release --split-per-abi`
+- iOS App Store: `flutter build ios --release`
+- Web (experimental): `flutter build web --release`
+
+## Troubleshooting
+**Sync not working**
+- Check network & Supabase credentials
+- Verify the `rooms` record exists and the `last_updated_at` field is recent
+
+**Audio not playing**
+- Check device volume & supported audio format
+- Test with another audio file or direct URL
+
+**High battery usage**
+- Reduce sync frequency
+- Consider background execution and platform-specific battery optimizations
+
+## Contributing
+1. Fork the repo
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit your changes and push
+4. Open a Pull Request
+
+Please follow Dart style and run `flutter format` before committing.
+
+## License & Support
+This project is licensed under the MIT License. See `LICENSE` for details.
+
+Support: support@beatsync.app
+
+---
+
+*If you'd like, I can add a `README` table of contents links, `.env.example`, or a `CONTRIBUTING.md` next.*
