@@ -183,7 +183,7 @@ class MusicLogicService extends ChangeNotifier {
     // We can just listen regardless, but only update if we are the host.
     // For simplicity, we assume this is called by hostPrepareRoom so we are host.
 
-    final subscription = _supabase
+    _supabase
         .from('room_participants')
         .stream(primaryKey: ['id'])
         .eq('room_id', _roomCode!)
@@ -252,7 +252,11 @@ class MusicLogicService extends ChangeNotifier {
         .select('host_id')
         .eq('id', _roomCode!)
         .single();
+
     if (room['host_id'] == _currentUserId) {
+      // WAIT 1 SECOND (Sync Delay) // optional 
+      // await Future.delayed(const Duration(seconds: 1));
+
       final nextIndex = _currentSongIndex + 1;
       // Check if next song exists
       final nextVid = await _getVideoIdFromPlaylist(nextIndex);

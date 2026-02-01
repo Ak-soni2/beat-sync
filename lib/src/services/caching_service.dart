@@ -4,41 +4,66 @@ import 'package:path_provider/path_provider.dart';
 
 class CachingService {
   final Dio _dio = Dio();
-  // Hosted Backend (Vercel)
-  final String _backendUrl = "https://beat-sync-backend.vercel.app";
+  final String _saavnUrl = "https://saavn.sumit.co";
 
-  /// 1. Extract & Download a Song
-  /// Returns the LOCAL path of the downloaded file
-  Future<String?> cacheSong(String videoId, int index,
+  /// Downloads a song using the JioSaavn ID directly from the API
+  Future<String?> cacheSong(String songId, int index,
       {Function(double)? onProgress}) async {
     try {
-      // 1. Check Local Cache First
+      // 1. Check Local Cache
       final localPath = await getCachedPath(index);
       if (localPath != null) {
         if (onProgress != null) onProgress(1.0);
         return localPath;
       }
 
-      print("⬇️ Asking Server for URL: $videoId...");
+      print("⬇️ Fetching Metadata for ID: $songId...");
 
-      // 2. Ask Node.js for the URL
-      // (This bypasses the blocking because Node.js does the work)
-      final response =
-          await _dio.get('$_backendUrl/get-audio-url?videoId=$videoId');
+      // 2. Fetch Song Details directly from JioSaavn API
+      final response = await _dio.get('$_saavnUrl/api/songs/$songId');
 
-      if (response.statusCode != 200) {
-        print("❌ Server refused: ${response.data}");
+      if (response.statusCode != 200 || response.data['success'] == false) {
+        print("❌ API Error: ${response.data}");
         return null;
       }
 
-      final String downloadUrl = response.data['url'];
-      print("✅ Got URL from Server. Downloading...");
+      final data = response.data['data'];
+      if ((data as List).isEmpty) return null;
 
-      // 3. Prepare File
+      final songData = data[0];
+      final List downloads = songData['downloadUrl'];
+
+      // 3. Find Best Quality (320kbps > 160kbps > Last)
+      String? downloadUrl;
+
+      // Try 320kbps
+      final q320 = downloads.firstWhere((d) => d['quality'] == "320kbps",
+          orElse: () => null);
+      if (q320 != null) downloadUrl = q320['url'];
+
+      // Try 160kbps (Fallback 1)
+      if (downloadUrl == null) {
+        final q160 = downloads.firstWhere((d) => d['quality'] == "160kbps",
+            orElse: () => null);
+        if (q160 != null) downloadUrl = q160['url'];
+      }
+
+      // Fallback 2: Last available
+      if (downloadUrl == null && downloads.isNotEmpty) {
+        downloadUrl = downloads.last['url'];
+      }
+
+      if (downloadUrl == null) {
+        print("❌ No download URL found.");
+        return null;
+      }
+
+      print("✅ Got URL. Downloading...");
+
+      // 4. Download the File
       final dir = await getTemporaryDirectory();
       final filePath = '${dir.path}/song_$index.m4a';
 
-      // 4. Download the File
       await _dio.download(downloadUrl, filePath,
           onReceiveProgress: (received, total) {
         if (total != -1 && onProgress != null) {
@@ -46,9 +71,10 @@ class CachingService {
         }
       });
 
+      print("✅ Download Complete: $filePath");
       return filePath;
     } catch (e) {
-      print("❌ Error caching song: $e");
+      print("❌ Error downloading: $e");
       return null;
     }
   }
@@ -67,7 +93,6 @@ class CachingService {
     }
   }
 
-  /// 3. Get Local Path if exists
   Future<String?> getCachedPath(int index) async {
     final dir = await getTemporaryDirectory();
     final file = File('${dir.path}/song_$index.m4a');

@@ -1,40 +1,59 @@
-import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:dio/dio.dart';
 
 class YouTubeService {
-  final YoutubeExplode _yt = YoutubeExplode();
+  final Dio _dio = Dio();
+  final String _saavnUrl = "https://saavn.sumit.co";
 
-  /// Gets the highest bitrate audio-only stream URL for a video.
-  Future<String?> getAudioUrl(String videoId) async {
-    try {
-      var manifest = await _yt.videos.streamsClient.getManifest(videoId);
-      var audioStream = manifest.audioOnly.withHighestBitrate();
-      return audioStream.url.toString();
-    } catch (e) {
-      print("Error getting audio URL for $videoId: $e");
-      return null;
-    }
-  }
-
-  /// Searches for videos on YouTube.
+  /// Searches for music directly via JioSaavn API
   Future<List<Map<String, dynamic>>> searchVideos(String query) async {
     try {
-      final results = await _yt.search.search(query);
-      return results.map((video) {
-        return {
-          'id': video.id.value,
-          'title': video.title,
-          'thumbnail': video.thumbnails.mediumResUrl,
-          'duration_ms': video.duration?.inMilliseconds ?? 0,
-        };
-      }).toList();
+      final response = await _dio.get(
+        '$_saavnUrl/api/search/songs',
+        queryParameters: {'query': query, 'limit': 15},
+      );
+
+      if (response.statusCode == 200 && response.data['success'] == true) {
+        final List<dynamic> results = response.data['data']['results'];
+        return results.map((song) {
+          // Get best quality image (index 2 is usually 500x500)
+          String imageUrl = "";
+          if (song['image'] != null && (song['image'] as List).isNotEmpty) {
+            imageUrl = (song['image'] as List).length > 2
+                ? song['image'][2]['url']
+                : song['image'][0]['url'];
+          }
+
+          // Convert duration (seconds) to milliseconds
+          int durationMs =
+              (int.tryParse(song['duration'].toString()) ?? 0) * 1000;
+
+          // Parse Artists
+          String artistName = "Unknown";
+          if (song['artists'] != null && song['artists']['primary'] != null) {
+            final primaries = song['artists']['primary'] as List;
+            if (primaries.isNotEmpty) {
+              artistName = primaries.map((a) => a['name']).join(", ");
+            }
+          }
+
+          return {
+            'id': song['id'],
+            'title': song['name'], // API uses 'name', we use 'title'
+            'thumbnail': imageUrl,
+            'duration_ms': durationMs,
+            'artist': artistName
+          };
+        }).toList();
+      } else {
+        return [];
+      }
     } catch (e) {
-      print("Error searching YouTube for $query: $e");
+      print("Error searching music: $e");
       return [];
     }
   }
 
-  /// Cleans up resources.
   void dispose() {
-    _yt.close();
+    _dio.close();
   }
 }
