@@ -1,14 +1,15 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
 android {
     namespace = "com.example.beat_sync"
-    // CHANGE 1: Set compileSdk to 36 as required by your plugins.
+
+    // Use 35 (Android 15) or 34. 36 is experimental and might crash if not installed.
     compileSdk = 36
-    // CHANGE 2: Set ndkVersion to the specific version your plugins need.
+
     ndkVersion = "27.0.12077973"
 
     compileOptions {
@@ -22,8 +23,9 @@ android {
 
     defaultConfig {
         applicationId = "com.example.beat_sync"
-        // CHANGE 3: The build failed because mobile_scanner needs at least 23.
-        minSdk = 23
+
+        // HARDCODED to 23 to fix the mobile_scanner issue
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -35,6 +37,17 @@ android {
         }
     }
 }
+
 flutter {
     source = "../.."
+}
+
+// THIS IS THE FIX for the "Requires AGP 8.9.1" error
+// (Syntax adapted for Kotlin DSL)
+configurations.all {
+    resolutionStrategy {
+        force("androidx.browser:browser:1.8.0")
+        force("androidx.core:core:1.15.0")
+        force("androidx.core:core-ktx:1.15.0")
+    }
 }
